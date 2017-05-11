@@ -1,8 +1,9 @@
-# Docker + Nginx + Let's Encrypt 
+# Docker + Nginx + Let's Encrypt
 
-This simple example shows how to set up multiple websites running behind a dockerized Nginx reverse proxy and served via HTTPS using free [Let's Encrypt](https://letsencrypt.org) certificates. New sites can be added on the fly by just modifying `docker-compose.yml` and then running `docker-compose up` as the main Nginx config is automatically updated and certificates (if needed) are automatically acquired.
+This simple example shows how to set up multiple websites running behind a dockerized Nginx reverse proxy and served via HTTPS using free [Let's Encrypt](https://letsencrypt.org) certificates, in a secure way. New sites can be added on the fly by running new Docker containers with a couple of environment variables set. When new containers start, the proxy's Nginx config is automatically updated and certificates (if needed) are automatically acquired.
 
-Some of the configuration is derived from <https://github.com/fatk/docker-letsencrypt-nginx-proxy-companion-examples> with some simplifications and updates to work with current `nginx.tmpl` from [nginx-proxy](https://github.com/jwilder/nginx-proxy) and docker-compose v2 files.
+This is derived from <https://gilyes.com/docker-nginx-letsencrypt>.
+
 
 ## Running the example
 ### Prerequisites
@@ -11,15 +12,19 @@ Some of the configuration is derived from <https://github.com/fatk/docker-letsen
 * access to (sub)domain(s) pointing to a publicly accessible server (required for TLS)
 
 ### Preparation
-* Clone the [repository](https://github.com/gilyes/docker-nginx-letsencrypt-sample) on the server pointed to by your domain. 
-* In `docker-compose.yml`: 
-  * Change the **VIRTUAL_HOST** and **LETSENCRYPT_HOST** entries from *sampleapi.example.com* and *samplewebsite.example.com* to your domains.
-  * Change **LETSENCRYPT_EMAIL** entries to the email address you want to be associated with the certificates. 
-* In `volumes/config/sample-website/config.js` change **apiUrl** to your API endpoint as set up in the previous point in `docker-compose.yml`.
+* Clone the [repository](https://github.com/brentkearney/docker-nginx-letsencrypt-sample.git) on your server.
+* Add these environment variables to the containers that you want proxied:
+  * VIRTUAL_HOST=fqdn.yourdomain.com
+  * VIRTUAL_NETWORK=nginx-proxy
+  * VIRTUAL_PORT=80
+* Add these environment variables to the containers that you want automatic, free SSL certificates for:
+  * LETSENCRYPT_HOST=fqdn.yourdomain.com (use a comma-separated list for multiple domains per certificate)
+  * LETSENCRYPT_EMAIL=your@email.com (the email address you want to be associated with the certificates)
+
 
 ### Running
-In the main directory run: 
-```bash
+In the main directory run:
+```
 docker-compose up
 ```
 
@@ -27,12 +32,13 @@ This will perform the following steps:
 
 * Download the required images from Docker Hub ([nginx](https://hub.docker.com/_/nginx/), [docker-gen](https://hub.docker.com/r/jwilder/docker-gen/), [docker-letsencrypt-nginx-proxy-companion](https://hub.docker.com/r/jrcs/letsencrypt-nginx-proxy-companion/)).
 * Create containers from them.
-* Build and create containers for the two sites located in `sample-websites`.
-* Start up the containers. 
+* Start up the containers.
   * *docker-letsencrypt-nginx-proxy-companion* inspects containers' metadata and tries to acquire certificates as needed (if successful then saving them in a volume shared with the host and the Nginx container).
   * *docker-gen* also inspects containers' metadata and generates the configuration file for the main Nginx reverse proxy
 
-If everything went well then you should now be able to access your website at the provided address.
+Next, start your other containers with the environment variables specified above (VIRTUAL_HOST, VIRTUAL_NETWORK, VIRTUAL_PORT, LETSENCRYPT_HOST, LETSENCRYPT_EMAIL).
+
+If everything went well then you should now be able to access your website(s).
 
 ### Troubleshooting
 * To view logs run `docker-compose logs`.
@@ -72,11 +78,11 @@ services:
 
 As you can see it shares a few volumes:
 * Configuration folder: used by the container that generates the configuration file.
-* Default Nginx root folder: used by the Let's Encrypt container for challenges from the CA. 
-* Certificates folder: written to by the Let's Encrypt container, this is where the TLS certificates are maintained. 
+* Default Nginx root folder: used by the Let's Encrypt container for challenges from the CA.
+* Certificates folder: written to by the Let's Encrypt container, this is where the TLS certificates are maintained.
 
 ### The configuration generator container
-This container inspects the other running containers and based on their metadata (like **VIRTUAL_HOST** environment variable) and a template file it generates the Nginx configuration file for the main Nginx container. When a new container is spinning up this container detects that, generates the appropriate configuration entries and restarts Nginx. 
+This container inspects the other running containers and based on their metadata (like **VIRTUAL_HOST** environment variable) and a template file it generates the Nginx configuration file for the main Nginx container. When a new container is spinning up this container detects that, generates the appropriate configuration entries and restarts Nginx.
 
 Uses the [jwilder/docker-gen](https://hub.docker.com/r/jwilder/docker-gen/) Docker image.
 
@@ -100,13 +106,13 @@ services:
 
 The container reads the `nginx.tmpl` template file (source: [jwilder/nginx-proxy](https://github.com/jwilder/nginx-proxy)) via a volume shared with the host.
 
-It also mounts the Docker socket into the container in order to be able to inspect the other containers (the `"/var/run/docker.sock:/tmp/docker.sock:ro"` line). 
+It also mounts the Docker socket into the container in order to be able to inspect the other containers (the `"/var/run/docker.sock:/tmp/docker.sock:ro"` line).
 **Security warning**: mounting the Docker socket is usually discouraged because the container getting (even read-only) access to it can get root access to the host. In our case, this container is not exposed to the world so if you trust the code running inside it the risks are probably fairly low. But definitely something to take into account. See e.g. [The Dangers of Docker.sock](https://raesene.github.io/blog/2016/03/06/The-Dangers-Of-Docker.sock/) for further details.
 
 NOTE: it would be preferrable to have docker-gen only handle containers with exposed ports (via `-only-exposed` flag in the `entrypoint` script above) but currently that does not work, see e.g. <https://github.com/jwilder/nginx-proxy/issues/438>.
 
 ### The Let's Encrypt container
-This container also inspects the other containers and acquires Let's Encrypt TLS certificates based on the **LETSENCRYPT_HOST** and **LETSENCRYPT_EMAIL** environment variables. At regular intervals it checks and renews certificates as needed. 
+This container also inspects the other containers and acquires Let's Encrypt TLS certificates based on the **LETSENCRYPT_HOST** and **LETSENCRYPT_EMAIL** environment variables. At regular intervals it checks and renews certificates as needed.
 
 Uses the [jrcs/letsencrypt-nginx-proxy-companion](https://hub.docker.com/r/jrcs/letsencrypt-nginx-proxy-companion/) Docker image.
 
@@ -133,8 +139,8 @@ The container uses a volume shared with the host and the Nginx container to main
 
 It also mounts the Docker socket in order to inspect the other containers. See the security warning above in the docker-gen section about the risks of that.
 
-### The sample website and the sample API 
-These two very simple samples are running in their own respective containers. They are defined in `docker-compose.yml` under the **sample-api** and **sample-website** service blocks: 
+### Example website and API
+These two very simple examples are running in their own respective containers. They are defined in a `docker-compose.yml` file:
 
 ```
 services:
@@ -151,6 +157,8 @@ services:
       - VIRTUAL_PORT=3000
       - LETSENCRYPT_HOST=sampleapi.example.com
       - LETSENCRYPT_EMAIL=email@example.com
+    networks:
+      - nginx-proxy
 
   sample-website:
     restart: always
@@ -166,11 +174,16 @@ services:
       - VIRTUAL_PORT=80
       - LETSENCRYPT_HOST=sample.example.com
       - LETSENCRYPT_EMAIL=email@example.com
+    networks:
+      - nginx-proxy
+
+    networks:
+      nginx-proxy:
+        external: true
 ```
 The important part here are the environment variables. These are used by the config generator and certificate maintainer containers to set up the system.
 
-The source code for these two images is in the `samples` subfolder, the images are built from there. In a real-world scenario these images would likely come from a Docker registry.
 
 ## Conclusion
-This can be a fairly simple way to have easy, reproducible deploys for websites with free, auto-renewing TLS certificates. 
+This can be a fairly simple way to have easy, reproducible deploys for websites with free, auto-renewing TLS certificates.
 
