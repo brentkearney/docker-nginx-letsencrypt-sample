@@ -1,6 +1,6 @@
 # Docker + Nginx + Let's Encrypt
 
-This simple example shows how to set up multiple websites running behind a dockerized Nginx reverse proxy and served via HTTPS using free [Let's Encrypt](https://letsencrypt.org) certificates, in a secure way. New sites can be added on the fly by running new Docker containers with a couple of environment variables set. When new containers start, the proxy's Nginx config is automatically updated and certificates (if needed) are automatically acquired.
+This docker-compose file provides a way for multiple websites to run behind a dockerized Nginx reverse proxy and served via HTTPS using free [Let's Encrypt](https://letsencrypt.org) certificates. New sites can be added automatically by running new Docker containers with a couple of environment variables set. When the new containers start, the proxy's Nginx config is automatically updated and certificates (if needed) are automatically acquired; no manual steps necessary.
 
 This is derived from <https://gilyes.com/docker-nginx-letsencrypt>.
 
@@ -11,7 +11,7 @@ This is derived from <https://gilyes.com/docker-nginx-letsencrypt>.
 * [docker-compose](https://github.com/docker/compose/releases) (>= 1.8.1)
 * access to (sub)domain(s) pointing to a publicly accessible server (required for TLS)
 
-### Preparation
+### Installation
 * Clone the [repository](https://github.com/brentkearney/docker-nginx-letsencrypt-sample.git) on your server.
 * Add these environment variables to the containers that you want proxied:
   * VIRTUAL_HOST=fqdn.yourdomain.com
@@ -25,7 +25,8 @@ This is derived from <https://gilyes.com/docker-nginx-letsencrypt>.
 ### Running
 In the main directory run:
 ```
-docker-compose up
+docker-compose up -d
+docker-compose logs
 ```
 
 This will perform the following steps:
@@ -44,28 +45,28 @@ If everything went well then you should now be able to access your website(s).
 * To view logs run `docker-compose logs`.
 * To view the generated Nginx configuration run `docker exec -ti nginx cat /etc/nginx/conf.d/default.conf`
 
-## How does it work
+## How It Works
 
 The system consists of 4 main parts:
 
 * Main Nginx reverse proxy container.
 * Container that generates the main Nginx config based on container metadata.
 * Container that automatically handles the acquisition and renewal of Let's Encrypt TLS certificates.
-* The actual websites living in their own containers. In this example, a very simple website, talking to a very simple API.
+* The actual websites living in their own containers.
 
 ### The main Nginx reverse proxy container
 This is the only publicly exposed container, routes traffic to the backend servers and provides TLS termination.
 
 Uses the official [nginx](https://hub.docker.com/_/nginx/) Docker image.
 
-It is defined in `docker-compose.yml` under the **nginx** service block:
+It is defined in `docker-compose.yml` under the **nginx-proxy** service block:
 
 ```
 services:
-  nginx:
+  nginx-proxy:
     restart: always
     image: nginx
-    container_name: nginx
+    container_name: nginx-proxy
     ports:
       - "80:80"
       - "443:443"
@@ -74,12 +75,27 @@ services:
       - "/etc/nginx/vhost.d"
       - "/usr/share/nginx/html"
       - "./volumes/proxy/certs:/etc/nginx/certs:ro"
+      - "./volumes/vhost.d:/etc/nginx/vhost.d"
 ```
 
 As you can see it shares a few volumes:
 * Configuration folder: used by the container that generates the configuration file.
 * Default Nginx root folder: used by the Let's Encrypt container for challenges from the CA.
 * Certificates folder: written to by the Let's Encrypt container, this is where the TLS certificates are maintained.
+* Virtual hosts folder: if you have site-specific nginx configurations, e.g. to enable CORS, add a file with the same name as the FQDN of the service, followed by "_location". For example, "service.example.com_location". You can add nginx configuration directives in that file. For example, to add CORS support, the file would contain:
+```
+  set $cors '';
+  if ($http_origin ~* 'https?://(localhost|someothersite.com|.+\.yetanothersite.com|.+\.andanother\.org)') {
+     set $cors 'true';
+  }
+
+  if ($cors = 'true') {
+     add_header 'Access-Control-Allow-Origin' "$http_origin";
+     add_header 'Access-Control-Allow-Credentials' 'true';
+     add_header 'Access-Control-Allow-Methods' 'GET';
+     add_header 'Access-Control-Allow-Headers' 'Accept,Authorization,Cache-Control,Content-Type,DNT,If-Modified-Since,Keep-Alive,Origin,User-Agent,X-Mx-ReqToken,X-Requested-With';
+  }
+```
 
 ### The configuration generator container
 This container inspects the other running containers and based on their metadata (like **VIRTUAL_HOST** environment variable) and a template file it generates the Nginx configuration file for the main Nginx container. When a new container is spinning up this container detects that, generates the appropriate configuration entries and restarts Nginx.
@@ -100,8 +116,8 @@ services:
       - "/var/run/docker.sock:/tmp/docker.sock:ro"
       - "./volumes/proxy/templates/nginx.tmpl:/etc/docker-gen/templates/nginx.tmpl:ro"
     volumes_from:
-      - nginx
-    entrypoint: /usr/local/bin/docker-gen -notify-sighup nginx -watch -wait 5s:30s /etc/docker-gen/templates/nginx.tmpl /etc/nginx/conf.d/default.conf
+      - nginx-proxy
+    entrypoint: /usr/local/bin/docker-gen -notify-sighup nginx-proxy -watch -wait 5s:30s /etc/docker-gen/templates/nginx.tmpl /etc/nginx/conf.d/default.conf
 ```
 
 The container reads the `nginx.tmpl` template file (source: [jwilder/nginx-proxy](https://github.com/jwilder/nginx-proxy)) via a volume shared with the host.
@@ -112,7 +128,7 @@ It also mounts the Docker socket into the container in order to be able to inspe
 NOTE: it would be preferrable to have docker-gen only handle containers with exposed ports (via `-only-exposed` flag in the `entrypoint` script above) but currently that does not work, see e.g. <https://github.com/jwilder/nginx-proxy/issues/438>.
 
 ### The Let's Encrypt container
-This container also inspects the other containers and acquires Let's Encrypt TLS certificates based on the **LETSENCRYPT_HOST** and **LETSENCRYPT_EMAIL** environment variables. At regular intervals it checks and renews certificates as needed.
+This container also inspects the other containers and acquires Let's Encrypt TLS certificates based on the **LETSENCRYPT_HOST** and **LETSENCRYPT_EMAIL** environment variables. At 1-minute intervals it checks and renews certificates as needed.
 
 Uses the [jrcs/letsencrypt-nginx-proxy-companion](https://hub.docker.com/r/jrcs/letsencrypt-nginx-proxy-companion/) Docker image.
 
@@ -127,7 +143,7 @@ services:
     image: jrcs/letsencrypt-nginx-proxy-companion
     container_name: letsencrypt-nginx-proxy-companion
     volumes_from:
-      - nginx
+      - nginx-proxy
     volumes:
       - "/var/run/docker.sock:/var/run/docker.sock:ro"
       - "./volumes/proxy/certs:/etc/nginx/certs:rw"
@@ -139,8 +155,8 @@ The container uses a volume shared with the host and the Nginx container to main
 
 It also mounts the Docker socket in order to inspect the other containers. See the security warning above in the docker-gen section about the risks of that.
 
-### Example website and API
-These two very simple examples are running in their own respective containers. They are defined in a `docker-compose.yml` file:
+### Example websites
+These two very simple examples are running in their own respective containers. They are defined in their own `docker-compose.yml` file:
 
 ```
 services:

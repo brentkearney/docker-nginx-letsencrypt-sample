@@ -1,0 +1,19 @@
+
+  #
+  # # nginx config settings to allow CORS from specified sites
+  #
+  # For more information on CORS, please see: http://enable-cors.org/
+  # Forked from this Gist: https://gist.github.com/michiel/1064640
+  #
+
+  set $cors '';
+  if ($http_origin ~* 'https?://(localhost|remotesite.com|.+\.remotedomain.com|.+\.other\.remote\.com)') {
+     set $cors 'true';
+  }
+
+  if ($cors = 'true') {
+     add_header 'Access-Control-Allow-Origin' "$http_origin";
+     add_header 'Access-Control-Allow-Credentials' 'true';
+     add_header 'Access-Control-Allow-Methods' 'GET';
+     add_header 'Access-Control-Allow-Headers' 'Accept,Authorization,Cache-Control,Content-Type,DNT,If-Modified-Since,Keep-Alive,Origin,User-Agent,X-Mx-ReqToken,X-Requested-With';
+  }
