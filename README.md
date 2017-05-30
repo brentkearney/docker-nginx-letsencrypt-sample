@@ -13,6 +13,8 @@ This is derived from <https://gilyes.com/docker-nginx-letsencrypt>.
 
 ### Installation
 * Clone the [repository](https://github.com/brentkearney/docker-nginx-letsencrypt-sample.git) on your server.
+* Create the directory ./volumes/certs
+* Update or remove the DEFAULT_HOST from docker-compose.yml
 * Add these environment variables to the containers that you want proxied:
   * VIRTUAL_HOST=fqdn.yourdomain.com
   * VIRTUAL_NETWORK=nginx-proxy
